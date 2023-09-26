@@ -30,6 +30,8 @@ color_value_alpha = Forward()
 
 color_value_mix = Forward()
 
+color_value_generic_function = Forward()
+
 color_value_keyword = Word(alphanums + "-")
 
 color_value = (
@@ -39,6 +41,7 @@ color_value = (
     | color_value_rgb
     | color_value_alpha
     | color_value_mix
+    | color_value_generic_function
     | color_value_keyword
 )
 
@@ -64,6 +67,12 @@ def convert_mix(results: ParseResults):
     alpha = float(results["alpha"][0]) * 100
     return f"color-mix(in srgb, {c1} {alpha}%, {c2})"
 
+color_value_generic_function = (
+    Combine(Word(alphanums + "-_") + "(")
+    + OneOrMore(color_value | Literal("/") | Literal(",") | Literal("%"))
+    + ")"
+)
+
 color_definition = (
     Keyword("@define-color")
     + color_name("color_name")
@@ -86,7 +95,7 @@ def convert_selector(results: ParseResults):
 declaration_name = Word(alphanums + "-_")
 
 declaration_value = (
-    OneOrMore(color_value | Literal("/") | Literal(","))
+    OneOrMore(color_value | Literal("/") | Literal(",") | Literal("|"))
     + FollowedBy(ZeroOrMore(Literal(";") | Literal("}")))
 )
 
