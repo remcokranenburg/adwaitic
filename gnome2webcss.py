@@ -15,7 +15,7 @@ def convert_gnome_variable(results: ParseResults):
     return "var(--" + results["name"] + ")"
 
 color_value_hex = Combine("#" + Word(srange("[0-9a-fA-F]")))
-color_channel = pyparsing_common.number ^ pyparsing_common.number + "%"
+color_channel = Combine(pyparsing_common.number + "%") | pyparsing_common.number
 
 color_value_rgb = original_text_for(
     (Literal("rgb(") | Literal("rgba("))
@@ -50,7 +50,12 @@ color_value_alpha <<= Literal("alpha(") + color_value("color") + "," + color_cha
 @color_value_alpha.set_parse_action
 def convert_alpha(results: ParseResults):
     color = results["color"][0]
-    alpha = float(results["alpha"][0]) * 100
+
+    if type(results["alpha"]) == float:
+        alpha = results["alpha"] * 100
+    else:
+        alpha = results["alpha"]
+
     return f"color-mix(in srgb, {color} {alpha}%, transparent)"
 
 color_value_mix <<= (
@@ -69,12 +74,12 @@ def convert_mix(results: ParseResults):
 
 color_value_generic_function = (
     Combine(Word(alphanums + "-_") + "(")
-    + OneOrMore(color_value | Literal("/") | Literal(",") | Literal("%"))
+    + OneOrMore(color_channel | Literal("/") | Literal(",") | color_value)
     + ")"
 )
 
 color_definition = (
-    Keyword("@define-color")
+    Literal("@define-color")
     + color_name("color_name")
     + color_value("color_value")
     + ";"
@@ -130,7 +135,12 @@ keyframes = (
     Literal("@keyframes")
     + Word(alphanums + "-_")
     + "{"
-    + OneOrMore(one_of(["to", "from"]) + "{" + declaration_list + "}")
+    + OneOrMore(
+        (Literal("to") | Literal("from"))
+        + "{"
+        + Opt(declaration_list)
+        + "}"
+    )
     + "}"
 )
 
@@ -149,36 +159,47 @@ def convert_rules(results: ParseResults):
 
 def test():
     color_name.run_tests("""
+        # color_name
         hi
         hello_world
         foo-bar
     """)
 
     color_value_rgb.run_tests("""
+        # color_value
         rgb(1, 2, 3)
         rgba( 123 ,234, 345, 0.1)
         rgb(100%, 1.5, -3, .1)
     """)
 
     color_value_variable.run_tests("""
+        # color_value_variable
         var(--hello-world)
         var(--foo_bar)
         var(--hi2)
     """)
 
     color_value_alpha.run_tests("""
+        # color_value_alpha
         alpha(red, 0.15)
         alpha(#123, 0.59)
         alpha(@something, 0.3)
     """)
 
+    color_value_generic_function.run_tests("""
+        # color_value_generic_function
+        radial-gradient(farthest-side, @accent_color 0%, transparent 0%)
+    """)
+
     color_definition.run_tests("""
+        # color_definition
         @define-color foo var(--bar);
         @define-color hello_world @foo;
         @define-color hi2 red;
     """)
 
     selector.run_tests("""
+        # selector
         .foo {
         foo {
         a + b {
@@ -186,30 +207,43 @@ def test():
     """)
 
     declaration_value.run_tests("""
+        # declaration_value
         solid line 12px @thiscolor
         12 boo / @blah 10px
         alpha(@view_fg_color,0.1)
+        radial-gradient(farthest-side, @accent_color 0%, transparent 0%)
     """)
 
     declaration.run_tests("""
+        # declaration
         a:b
         background-color: alpha(@view_fg_color,0.1)
         -gtk-icon-shadow: 0 -1px rgba(0, 0, 0, 0.05), 1px 0 rgba(0, 0, 0, 0.1)
+        background-image: radial-gradient(farthest-side, @accent_color 0%, transparent 0%)
     """)
 
     declaration_list.run_tests("""
+        # declaration_list
         a:b; c:24px;
         a:b
         c:24px; d: 12 boo / @blah 10px
         background-color: alpha(@view_fg_color,0.1); color: transparent;
+        background-image: radial-gradient(farthest-side, @accent_color 0%, transparent 0%);
+    """)
+
+    keyframes.run_tests("""
+        # keyframes
+        @keyframes needs_attention { from { background-image: radial-gradient(farthest-side, @accent_color 0%, transparent 0%); } to { background-image: radial-gradient(farthest-side, @accent_color 95%, transparent); } }
     """)
 
     rule.run_tests("""
+        # rule
         .foo { a:b }
         a + b { c:24px; d:bar }
         a + b { c:24px; d: 12 boo / @blah 10px }
         @define-color blue_1 #123324;
         selection  { background-color: alpha(@view_fg_color,0.1); color: transparent; }
+        hello { background-image: radialgradient(farthest-side, @accent_color 0%, transparent 0%); }
     """)
 
 if "--test" in sys.argv:
@@ -218,4 +252,19 @@ if "--test" in sys.argv:
 
 for filename in sys.argv[1:]:
     with open(filename) as f:
-        print(rules.parse_file(f)[0])
+        for line in f:
+            try:
+                m = color_definition.parseString(line)
+            except ParseException:
+                try:
+                    m = css_rule.parseString(line)
+                except ParseException:
+                    try:
+                        m = keyframes.parseString(line)
+                    except ParseException:
+                        try:
+                            m = comment.parseString(line)
+                        except:
+                            print("Could not parse:", line)
+
+            print(m[0])
